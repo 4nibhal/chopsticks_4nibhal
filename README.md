@@ -8,6 +8,10 @@
 
 Create parallel reality of your Substrate network.
 
+## Introduction
+
+Chopsticks provides a developer-friendly method of locally forking existing Substrate based chains. It allows for the replaying of blocks to easily examine how extrinsics effect state, the forking of multiple blocks for XCM testing, and more. This allows developers to test and experiment with their own custom blockchain configurations in a local development environment, without the need to deploy a live network. Chopsticks aims to simplify the process of building blockchain applications on Substrate and make it accessible to a wider range of developers.
+
 ## Quick Start
 
 Fork Acala mainnet: `npx @acala-network/chopsticks@latest --endpoint=wss://acala-rpc-2.aca-api.network/ws`
@@ -63,7 +67,7 @@ Make sure you have setup Rust environment (>= 1.64).
 
 ## Dry-run
 
-- Dry run hep:
+- Dry run help:
  ```
  npx @acala-network/chopsticks@latest dry-run --help
  ```
@@ -153,3 +157,215 @@ Chopsticks is designed to be extensible. You can write your own plugin to extend
 There are 2 types of plugins: `cli` and `rpc`. `cli` plugins are used to extend Chopsticks' CLI, while `rpc` plugins are used to extend Chopsticks' RPC.
 
 To create a new plugin, you could check out the [run-block plugin](packages/chopsticks/src/plugins/run-block/) as an example.
+
+
+## RPC Methods
+
+Chopsticks allows you to load your extended rpc methods by adding the cli argument `--unsafe-rpc-methods=<file path>`or `-ur=<file path>`.
+
+### **WARNING:**
+
+It loads an **unverified** scripts, making it **unsafe**. Ensure you load a **trusted** script.
+
+**example**:
+
+`npx @acala-network/chopsticks@latest --unsafe-rpc-methods=rpc-methods-scripts.js`
+
+**scripts example of rpc-methods-scripts:**
+
+```
+return {
+  async testdev_testRpcMethod1(context, params) {
+    console.log('testdev_testRpcMethod 1', params)
+    return { methods: 1, params }
+  },
+  async testdev_testRpcMethod2(context, params) {
+    console.log('testdev_testRpcMethod 2', params)
+    return { methods: 2, params }
+  },
+}
+```
+
+## Testing with @acala-network/chopsticks-testing
+
+The `@acala-network/chopsticks-testing` package provides powerful utilities for testing blockchain data, making it easier to write and maintain tests for your Substrate-based chain. It offers features like data redaction, event filtering, snapshot testing, and XCM message checking.
+
+### Installation
+
+```bash
+npm install --save-dev @acala-network/chopsticks-testing
+```
+
+### Basic Usage
+
+```typescript
+import { withExpect, setupContext } from '@acala-network/chopsticks-testing';
+import { describe, expect, it } from 'vitest'; // or jest, or other test runners
+
+// Create testing utilities with your test runner's expect function
+const { check, checkEvents, checkSystemEvents, checkUmp, checkHrmp } = withExpect(expect);
+
+describe('My Chain Tests', () => {
+  it('should process events correctly', async () => {
+	const network = await setupContext({ endpoint: 'wss://polkadot-rpc.dwellir.com' });
+    // Check and redact system events
+    await checkSystemEvents(network)
+      .redact({ number: 2, hash: true })
+      .toMatchSnapshot('system events');
+
+    // Filter specific events
+    await checkSystemEvents(network, 'balances', { section: 'system', method: 'ExtrinsicSuccess' })
+      .toMatchSnapshot('filtered events');
+  });
+});
+```
+
+### Data Redaction
+
+The testing package provides powerful redaction capabilities to make your tests more stable and focused on what matters:
+
+```typescript
+await check(someData)
+  .redact({
+    number: 2,           // Redact numbers with 2 decimal precision
+    hash: true,          // Redact 32-byte hex values
+    hex: true,           // Redact any hex values
+    address: true,       // Redact base58 addresses
+    redactKeys: /hash/,  // Redact values of keys matching regex
+    removeKeys: /time/   // Remove keys matching regex entirely
+  })
+  .toMatchSnapshot('redacted data');
+```
+
+### Event Filtering
+
+Filter and check specific blockchain events:
+
+```typescript
+// Check all balances events
+await checkSystemEvents(api, 'balances')
+  .toMatchSnapshot('balances events');
+
+// Check specific event type
+await checkSystemEvents(api, { section: 'system', method: 'ExtrinsicSuccess' })
+  .toMatchSnapshot('successful extrinsics');
+
+// Multiple filters
+await checkSystemEvents(api,
+  'balances',
+  { section: 'system', method: 'ExtrinsicSuccess' }
+)
+.toMatchSnapshot('filtered events');
+```
+
+### XCM Testing
+
+Test XCM (Cross-Chain Message) functionality:
+
+```typescript
+// Check UMP (Upward Message Passing) messages
+await checkUmp(api)
+  .redact()
+  .toMatchSnapshot('upward messages');
+
+// Check HRMP (Horizontal Relay-routed Message Passing) messages
+await checkHrmp(api)
+  .redact()
+  .toMatchSnapshot('horizontal messages');
+```
+
+### Data Format Conversion
+
+Convert data to different formats for testing:
+
+```typescript
+// Convert to human-readable format
+await check(data).toHuman().toMatchSnapshot('human readable');
+
+// Convert to hex format
+await check(data).toHex().toMatchSnapshot('hex format');
+
+// Convert to JSON format (default)
+await check(data).toJson().toMatchSnapshot('json format');
+```
+
+### Custom Transformations
+
+Apply custom transformations to your data:
+
+```typescript
+await check(data)
+  .map(value => value.filter(item => item.amount > 1000))
+  .redact()
+  .toMatchSnapshot('filtered and redacted');
+```
+
+## Testing big migrations
+
+When testing migrations with lots of keys, you may want to fetch and cache some storages.
+
+There are two ways to fetch storages.
+
+The first way is to use a config file with a `prefetch-storages` section:
+
+```yml
+prefetch-storages:
+  - '0x123456' # fetch all storages with this prefix
+  - Balances # fetch all storages under Balances pallet
+  - Tokens.Accounts # fetch all storages under Tokens.Accounts stroage
+  - System: Account # fetch all storages under System.Account stroage
+  - Tokens:
+      Accounts: [5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY] # fetch all storages for Tokens.Accounts(Alice)
+  - Tokens.Accounts: [5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY, { token: DOT }] # fetch this particular storage
+```
+
+When you starts chopsticks, it will fetch these storages in background.
+
+Please note that only the formats mentioned above are supported for config files.
+
+The second way is use `fetch-storages` subcommand to only fetch and cache storages:
+
+```sh
+npx @acala-network/chopsticks@latest fetch-storages 0x123456 Balances Tokens.Accounts
+	--endpoint=wss://acala-rpc-0.aca-api.network
+	--block=<blockhash> # default to latest block
+	--db=acala.sqlite
+```
+
+The subcommand arguments could be:
+- hex: fetch all storages with this prefix
+- PalletName: fetch all storages for this pallet
+- PalletName.StorageName: fetch all storages for this storage
+
+Please note that for both ways, fetched storages will be saved in the sqlite file specified by `--db` option (`db: ./acala.sqlite` in a config file), if not provided, it will default to `./db-{network}-{block}.sqlite`.
+
+## Try-Runtime CLI
+
+Documentation can be found [here](packages/chopsticks/src/plugins/try-runtime/README.md)
+
+## FAQ
+
+### What is mocked? What are things that could work with chopsticks, but still fail in production?
+
+Generally, anything that involves something more than onchain STF `new_state = f(old_state)` are not guaranteed to work in production.
+In practice, here is an incomplete list that I can think of:
+
+- mocked tx pool
+- no real block finalization
+- mocked inherents
+- simulated XCM channels
+
+### How to change a pallet constant in chopsticks?
+
+You cannot change runtime constants in chopsticks, you have to edit and build a new runtime, and use `wasm-override` with the new wasm.
+
+### Storage override of value type `()`
+
+You can use `0x` for empty values, for example:
+
+```yaml
+Whitelist:
+    WhitelistedCall:
+      - - - '0xe284be84dcfaf714ef2b7717b54914632406f2c17d8203d3268e4c4ca68fa144'
+        - 0x
+```

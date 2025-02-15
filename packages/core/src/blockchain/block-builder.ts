@@ -1,4 +1,5 @@
-import {
+import type { GenericExtrinsic } from '@polkadot/types'
+import type {
   AccountInfo,
   ApplyExtrinsicResult,
   Call,
@@ -8,16 +9,16 @@ import {
   RawBabePreDigest,
   TransactionValidityError,
 } from '@polkadot/types/interfaces'
-import { Block } from './block.js'
-import { BuildBlockParams } from './txpool.js'
-import { GenericExtrinsic } from '@polkadot/types'
-import { HexString } from '@polkadot/util/types'
-import { InherentProvider } from './inherent/index.js'
-import { StorageLayer, StorageValueKind } from './storage-layer.js'
-import { TaskCallResponse } from '../wasm-executor/index.js'
 import { compactAddLength, hexToU8a, stringToHex, u8aConcat } from '@polkadot/util'
-import { compactHex, getCurrentSlot } from '../utils/index.js'
+import { blake2AsU8a } from '@polkadot/util-crypto'
+import type { HexString } from '@polkadot/util/types'
 import { defaultLogger, truncate } from '../logger.js'
+import { compactHex, getCurrentSlot } from '../utils/index.js'
+import type { TaskCallResponse } from '../wasm-executor/index.js'
+import { Block } from './block.js'
+import type { InherentProvider } from './inherent/index.js'
+import { StorageLayer, StorageValueKind } from './storage-layer.js'
+import type { BuildBlockParams } from './txpool.js'
 
 const logger = defaultLogger.child({ name: 'block-builder' })
 
@@ -40,14 +41,13 @@ export const genesisDigestLogs = async (head: Block) => {
       PreRuntime: [consensusEngine, compactAddLength(preDigest.toU8a())],
     })
     return [digest]
-  } else {
-    const newSlot = meta.registry.createType('Slot', currentSlot + 1)
-    const consensusEngine = meta.registry.createType<ConsensusEngineId>('ConsensusEngineId', 'aura')
-    const digest = meta.registry.createType<DigestItem>('DigestItem', {
-      PreRuntime: [consensusEngine, compactAddLength(newSlot.toU8a())],
-    })
-    return [digest]
   }
+  const newSlot = meta.registry.createType('Slot', currentSlot + 1)
+  const consensusEngine = meta.registry.createType<ConsensusEngineId>('ConsensusEngineId', 'aura')
+  const digest = meta.registry.createType<DigestItem>('DigestItem', {
+    PreRuntime: [consensusEngine, compactAddLength(newSlot.toU8a())],
+  })
+  return [digest]
 }
 
 const getConsensus = (header: Header) => {
@@ -107,7 +107,7 @@ export const newHeader = async (head: Block, unsafeBlockHeight?: number) => {
       meta.registry.createType<DigestItem>('DigestItem', { PreRuntime: [consensus.consensusEngine, newSlot] }),
       ...consensus.rest,
     ]
-  } else if (consensus?.consensusEngine?.toString() == 'nmbs') {
+  } else if (consensus?.consensusEngine?.toString() === 'nmbs') {
     const nmbsKey = stringToHex('nmbs')
     newLogs = [
       meta.registry.createType<DigestItem>('DigestItem', {
@@ -115,7 +115,7 @@ export const newHeader = async (head: Block, unsafeBlockHeight?: number) => {
         PreRuntime: [
           consensus.consensusEngine,
           parentHeader.digest.logs
-            .find((log) => log.isPreRuntime && log.asPreRuntime[0].toHex() == nmbsKey)
+            .find((log) => log.isPreRuntime && log.asPreRuntime[0].toHex() === nmbsKey)
             ?.asPreRuntime[1].toHex(),
         ],
       }),
@@ -254,7 +254,7 @@ export const buildBlock = async (
         const origin = { ump: { para: paraId } }
 
         let last = 0
-        let heap = new Uint8Array(0)
+        let heap: Uint8Array = new Uint8Array(0)
 
         for (const message of upwardMessagesU8a) {
           const payloadLen = message.length
@@ -341,9 +341,12 @@ export const buildBlock = async (
     callbacks?.onPhaseApplied?.('finalize', resp)
   }
 
-  const blockData = registry.createType('Block', {
-    header,
-    extrinsics: includedExtrinsic,
+  const allExtrinsics = [...inherents, ...includedExtrinsic]
+
+  const mockExtrinsicRoot = blake2AsU8a(u8aConcat(...allExtrinsics), 256)
+  const finalHeader = registry.createType<Header>('Header', {
+    ...header.toJSON(),
+    extrinsicsRoot: mockExtrinsicRoot,
   })
 
   const storageDiff = await newBlock.storageDiff()
@@ -355,9 +358,9 @@ export const buildBlock = async (
     )
   }
 
-  const finalBlock = new Block(head.chain, newBlock.number, blockData.hash.toHex(), head, {
-    header,
-    extrinsics: [...inherents, ...includedExtrinsic],
+  const finalBlock = new Block(head.chain, newBlock.number, finalHeader.hash.toHex(), head, {
+    header: finalHeader,
+    extrinsics: allExtrinsics,
     storage: head.storage,
     storageDiff,
   })
@@ -417,7 +420,7 @@ export const dryRunExtrinsic = async (
     return newBlock.call('BlockBuilder_apply_extrinsic', [generic.toHex()])
   }
 
-  logger.debug({ call: registry.createType('GenericExtrinsic', hexToU8a(extrinsic)).toHuman() }, 'dry_run_extrinsic')
+  logger.debug({ call: registry.createType('GenericExtrinsic', hexToU8a(extrinsic)).toJSON() }, 'dry_run_extrinsic')
   return newBlock.call('BlockBuilder_apply_extrinsic', [extrinsic])
 }
 

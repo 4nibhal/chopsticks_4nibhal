@@ -1,16 +1,16 @@
 import '@polkadot/types-codec'
-import { HexString } from '@polkadot/util/types'
 import { HttpProvider, WsProvider } from '@polkadot/rpc-provider'
-import { ProviderInterface } from '@polkadot/rpc-provider/types'
-import { RegisteredTypes } from '@polkadot/types/types'
+import type { ProviderInterface } from '@polkadot/rpc-provider/types'
+import type { RegisteredTypes } from '@polkadot/types/types'
+import type { HexString } from '@polkadot/util/types'
 
 import { Api } from './api.js'
 import { Blockchain } from './blockchain/index.js'
-import { BuildBlockMode } from './blockchain/txpool.js'
-import { Database } from './database.js'
-import { GenesisProvider } from './genesis-provider.js'
-import { defaultLogger } from './logger.js'
 import { inherentProviders } from './blockchain/inherent/index.js'
+import type { BuildBlockMode } from './blockchain/txpool.js'
+import type { Database } from './database.js'
+import type { GenesisProvider } from './genesis-provider.js'
+import { defaultLogger } from './logger.js'
 
 export type SetupOptions = {
   endpoint?: string | string[]
@@ -25,6 +25,9 @@ export type SetupOptions = {
   offchainWorker?: boolean
   maxMemoryBlockCount?: number
   processQueuedMessages?: boolean
+  hooks?: {
+    apiFetching?: () => void
+  }
 }
 
 export const processOptions = async (options: SetupOptions) => {
@@ -39,11 +42,15 @@ export const processOptions = async (options: SetupOptions) => {
     provider = new WsProvider(options.endpoint, 3_000)
   }
   const api = new Api(provider)
+
+  // setup api hooks
+  api.onFetching(options.hooks?.apiFetching)
+
   await api.isReady
 
   let blockHash: string
   if (options.block == null) {
-    blockHash = await api.getBlockHash().then((hash) => {
+    blockHash = await api.getFinalizedHead().then((hash) => {
       if (!hash) {
         // should not happen, but just in case
         throw new Error('Cannot find block hash')

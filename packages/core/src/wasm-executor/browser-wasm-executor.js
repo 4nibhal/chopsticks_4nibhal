@@ -1,5 +1,5 @@
-import * as Comlink from 'comlink'
 import * as pkg from '@acala-network/chopsticks-executor'
+import * as Comlink from 'comlink'
 
 const getRuntimeVersion = async (code) => {
   return pkg.get_runtime_version(code)
@@ -19,7 +19,7 @@ const createProof = async (nodes, updates) => {
 }
 
 const runTask = async (task, callback) => {
-  return pkg.run_task(task, callback, 'info')
+  return pkg.run_task(task, callback)
 }
 
 const testing = async (callback, key) => {

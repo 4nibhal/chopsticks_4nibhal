@@ -1,19 +1,19 @@
-import { HexString } from '@polkadot/util/types'
 import { writeFileSync } from 'node:fs'
-import { z } from 'zod'
+import type { HexString } from '@polkadot/util/types'
 import _ from 'lodash'
 import type { Argv } from 'yargs'
+import { z } from 'zod'
 
 import { runTask, taskHandler } from '@acala-network/chopsticks-core'
 
+import { setupContext } from '../../context.js'
 import { configSchema, getYargsOptions } from '../../schema/index.js'
 import { generateHtmlDiffPreviewFile } from '../../utils/generate-html-diff.js'
 import { openHtml } from '../../utils/open-html.js'
-import { setupContext } from '../../context.js'
 
 const schema = z.object({
   ...configSchema.shape,
-  ['output-path']: z
+  'output-path': z
     .string({
       description: 'File path to print output',
     })
@@ -75,7 +75,7 @@ export const cli = (y: Argv) => {
           openHtml(filePath)
         }
       } else if (argv.outputPath) {
-        writeFileSync(argv.outputPath, JSON.stringify(result, null, 2))
+        writeFileSync(argv.outputPath as string, JSON.stringify(result, null, 2))
       } else {
         console.dir(result, { depth: null, colors: false })
       }

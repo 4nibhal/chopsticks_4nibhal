@@ -1,6 +1,6 @@
-import { BlockEntry, Database, KeyValueEntry } from '@acala-network/chopsticks-core'
-import { DataSource } from 'typeorm'
-import { HexString } from '@polkadot/util/types'
+import type { BlockEntry, Database, KeyValueEntry } from '@acala-network/chopsticks-core'
+import type { HexString } from '@polkadot/util/types'
+import type { DataSource } from 'typeorm'
 
 import { BlockEntity, KeyValuePair } from './db/entities.js'
 
@@ -68,6 +68,11 @@ export abstract class BaseSqlDatabase implements Database {
       },
       ['blockHash', 'key'],
     )
+  }
+
+  async saveStorageBatch(entries: KeyValueEntry[]) {
+    const db = await this.datasource
+    await db.getRepository(KeyValuePair).upsert(entries, ['blockHash', 'key'])
   }
 
   async queryStorage(blockHash: HexString, key: HexString): Promise<KeyValueEntry | null> {

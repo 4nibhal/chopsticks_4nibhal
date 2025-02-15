@@ -1,10 +1,19 @@
 import './utils/tunnel.js'
-import { BlockEntry, GenesisProvider, defaultLogger, isUrl, setup, timeTravel } from '@acala-network/chopsticks-core'
-import { Config } from './schema/index.js'
-import { HexString } from '@polkadot/util/types'
+import {
+  type BlockEntry,
+  GenesisProvider,
+  defaultLogger,
+  isUrl,
+  setup,
+  timeTravel,
+} from '@acala-network/chopsticks-core'
 import { SqliteDatabase } from '@acala-network/chopsticks-db'
-import { overrideStorage, overrideWasm } from './utils/override.js'
+import type { HexString } from '@polkadot/util/types'
 import axios from 'axios'
+import { apiFetching } from './logger.js'
+import type { Config } from './schema/index.js'
+import { startFetchStorageWorker } from './utils/fetch-storages.js'
+import { overrideStorage, overrideWasm } from './utils/override.js'
 
 const logger = defaultLogger.child({ name: 'setup-context' })
 
@@ -12,7 +21,8 @@ export const genesisFromUrl = async (url: string) => {
   const getFile = async (url: string) => {
     if (isUrl(url)) {
       return axios.get(url).then((x) => x.data)
-    } else if (typeof process === 'object') {
+    }
+    if (typeof process === 'object') {
       const { lstatSync, readFileSync } = await import('node:fs')
       if (lstatSync(url).isFile()) {
         return JSON.parse(String(readFileSync(url)))
@@ -25,12 +35,13 @@ export const genesisFromUrl = async (url: string) => {
 }
 
 export const setupContext = async (argv: Config, overrideParent = false) => {
+  const chainSpec = argv['chain-spec'] ?? argv.genesis
   let genesis: GenesisProvider | undefined
-  if (argv.genesis) {
-    if (typeof argv.genesis === 'string') {
-      genesis = await genesisFromUrl(argv.genesis)
+  if (chainSpec) {
+    if (typeof chainSpec === 'string') {
+      genesis = await genesisFromUrl(chainSpec)
     } else {
-      genesis = new GenesisProvider(argv.genesis)
+      genesis = new GenesisProvider(chainSpec)
     }
   }
 
@@ -47,6 +58,9 @@ export const setupContext = async (argv: Config, overrideParent = false) => {
     offchainWorker: argv['offchain-worker'],
     maxMemoryBlockCount: argv['max-memory-block-count'],
     processQueuedMessages: argv['process-queued-messages'],
+    hooks: {
+      apiFetching,
+    },
   })
 
   // load block from db
@@ -65,7 +79,9 @@ export const setupContext = async (argv: Config, overrideParent = false) => {
 
       if (blockData) {
         const block = await chain.loadBlockFromDB(blockData.number)
-        block && (await chain.setHead(block))
+        if (block) {
+          await chain.setHead(block)
+        }
         logger.info(`Resume from block ${blockData.number}, hash: ${blockData.hash}`)
       } else {
         throw new Error(`Resume failed. Cannot find block ${argv.resume}`)
@@ -88,5 +104,12 @@ export const setupContext = async (argv: Config, overrideParent = false) => {
   await overrideWasm(chain, argv['wasm-override'], at)
   await overrideStorage(chain, argv['import-storage'], at)
 
-  return { chain }
+  const fetchStorageWorker = await startFetchStorageWorker({
+    config: argv['prefetch-storages'],
+    dbPath: argv.db,
+    block: argv.block,
+    endpoint: argv.endpoint,
+  })
+
+  return { chain, fetchStorageWorker }
 }

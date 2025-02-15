@@ -1,11 +1,11 @@
 import { config as dotenvConfig } from 'dotenv'
 
-import { SetupOption, setupContext } from '@acala-network/chopsticks-testing'
+import { type SetupOption, setupContext } from '@acala-network/chopsticks-testing'
 
-dotenvConfig
+dotenvConfig()
 
 const endpoints = {
-  polkadot: ['wss://rpc.ibp.network/polkadot', 'wss://polkadot-rpc.dwellir.com'],
+  polkadot: ['wss://rpc-polkadot.luckyfriday.io'],
   acala: ['wss://acala-rpc.aca-api.network', 'wss://acala-rpc.dwellir.com'],
 }
 

@@ -1,9 +1,9 @@
-import { ExtDef } from '@polkadot/types/extrinsic/signedExtensions/types'
-import { HexString } from '@polkadot/util/types'
-import { ProviderInterface, ProviderInterfaceCallback } from '@polkadot/rpc-provider/types'
+import type { ProviderInterface, ProviderInterfaceCallback } from '@polkadot/rpc-provider/types'
+import type { ExtDef } from '@polkadot/types/extrinsic/signedExtensions/types'
+import type { HexString } from '@polkadot/util/types'
 import _ from 'lodash'
 
-import { ChainProperties, Header, SignedBlock } from './index.js'
+import type { ChainProperties, Header, SignedBlock } from './index.js'
 import { prefixedChildKey, splitChildKey, stripChildPrefix } from './utils/index.js'
 
 /**
@@ -25,6 +25,10 @@ export class Api {
   #chainProperties: Promise<ChainProperties> | undefined
 
   readonly signedExtensions: ExtDef
+
+  #apiHooks: {
+    fetching?: () => void
+  } = {}
 
   constructor(provider: ProviderInterface, signedExtensions?: ExtDef) {
     this.#provider = provider
@@ -68,20 +72,30 @@ export class Api {
     return this.#chainProperties
   }
 
+  // Set the hook function to be called when api fetch endpoint.
+  onFetching(fetching?: () => void) {
+    this.#apiHooks.fetching = fetching
+  }
+
+  async send<T = any>(method: string, params: unknown[], isCacheable?: boolean): Promise<T> {
+    this.#apiHooks?.fetching?.()
+    return this.#provider.send(method, params, isCacheable)
+  }
+
   async getSystemName() {
-    return this.#provider.send<string>('system_name', [])
+    return this.send<string>('system_name', [])
   }
 
   async getSystemProperties() {
-    return this.#provider.send<ChainProperties>('system_properties', [])
+    return this.send<ChainProperties>('system_properties', [])
   }
 
   async getSystemChain() {
-    return this.#provider.send<string>('system_chain', [])
+    return this.send<string>('system_chain', [])
   }
 
   async getBlockHash(blockNumber?: number) {
-    return this.#provider.send<HexString | null>(
+    return this.send<HexString | null>(
       'chain_getBlockHash',
       Number.isInteger(blockNumber) ? [blockNumber] : [],
       !!blockNumber,
@@ -89,11 +103,15 @@ export class Api {
   }
 
   async getHeader(hash?: string) {
-    return this.#provider.send<Header | null>('chain_getHeader', hash ? [hash] : [], !!hash)
+    return this.send<Header | null>('chain_getHeader', hash ? [hash] : [], !!hash)
+  }
+
+  async getFinalizedHead() {
+    return this.send<string>('chain_getFinalizedHead', [])
   }
 
   async getBlock(hash?: string) {
-    return this.#provider.send<SignedBlock | null>('chain_getBlock', hash ? [hash] : [], !!hash)
+    return this.send<SignedBlock | null>('chain_getBlock', hash ? [hash] : [], !!hash)
   }
 
   async getStorage(key: string, hash?: string) {
@@ -102,13 +120,12 @@ export class Api {
       // child storage key, use childstate_getStorage
       const params = [child, storageKey]
       if (hash) params.push(hash as HexString)
-      return this.#provider.send<HexString | null>('childstate_getStorage', params, !!hash)
-    } else {
-      // main storage key, use state_getStorage
-      const params = [key]
-      if (hash) params.push(hash)
-      return this.#provider.send<HexString | null>('state_getStorage', params, !!hash)
+      return this.send<HexString | null>('childstate_getStorage', params, !!hash)
     }
+    // main storage key, use state_getStorage
+    const params = [key]
+    if (hash) params.push(hash)
+    return this.send<HexString | null>('state_getStorage', params, !!hash)
   }
 
   async getKeysPaged(prefix: string, pageSize: number, startKey: string, hash?: string) {
@@ -121,12 +138,11 @@ export class Api {
       return this.#provider
         .send<HexString[]>('childstate_getKeysPaged', params, !!hash)
         .then((keys) => keys.map((key) => prefixedChildKey(child, key)))
-    } else {
-      // main storage key, use state_getKeysPaged
-      const params = [prefix, pageSize, startKey]
-      if (hash) params.push(hash)
-      return this.#provider.send<HexString[]>('state_getKeysPaged', params, !!hash)
     }
+    // main storage key, use state_getKeysPaged
+    const params = [prefix, pageSize, startKey]
+    if (hash) params.push(hash)
+    return this.send<HexString[]>('state_getKeysPaged', params, !!hash)
   }
 
   async getStorageBatch(prefix: HexString, keys: HexString[], hash?: HexString) {
@@ -139,14 +155,13 @@ export class Api {
       return this.#provider
         .send<HexString[]>('childstate_getStorageEntries', params, !!hash)
         .then((values) => _.zip(keys, values) as [HexString, HexString | null][])
-    } else {
-      // main storage key, use state_getStorageAt
-      const params: any[] = [keys]
-      if (hash) params.push(hash)
-      return this.#provider
-        .send<HexString[]>('state_queryStorageAt', params, !!hash)
-        .then((result) => (result[0]?.['changes'] as [HexString, HexString | null][]) || [])
     }
+    // main storage key, use state_getStorageAt
+    const params: any[] = [keys]
+    if (hash) params.push(hash)
+    return this.#provider
+      .send<HexString[]>('state_queryStorageAt', params, !!hash)
+      .then((result) => (result[0]?.['changes'] as [HexString, HexString | null][]) || [])
   }
 
   async subscribeRemoteNewHeads(cb: ProviderInterfaceCallback) {

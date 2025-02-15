@@ -18,6 +18,8 @@ use smoldot::{
 use std::collections::BTreeMap;
 use wasm_bindgen::prelude::*;
 
+const LOG_TARGET: &str = "chopsticks::executor";
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeVersion {
@@ -67,6 +69,20 @@ pub struct TaskCall {
     mock_signature_host: bool,
     allow_unresolved_imports: bool,
     runtime_log_level: u32,
+    storage_proof_size: u64,
+}
+
+impl TaskCall {
+    pub fn log_level(&self) -> Option<log::Level> {
+        match self.runtime_log_level {
+            1 => Some(log::Level::Error),
+            2 => Some(log::Level::Warn),
+            3 => Some(log::Level::Info),
+            4 => Some(log::Level::Debug),
+            5 => Some(log::Level::Trace),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -122,18 +138,21 @@ pub async fn run_task(task: TaskCall, js: crate::JsCallback) -> Result<TaskRespo
     let mut storage_changes: BTreeMap<Vec<u8>, Option<Vec<u8>>> = Default::default();
     let mut offchain_storage_changes: BTreeMap<Vec<u8>, Option<Vec<u8>>> = Default::default();
 
-    let vm_proto = HostVmPrototype::new(Config {
+    let vm_proto = match HostVmPrototype::new(Config {
         module: &task.wasm,
         heap_pages: HeapPages::from(2048),
         exec_hint: smoldot::executor::vm::ExecHint::ValidateAndExecuteOnce,
         allow_unresolved_imports: task.allow_unresolved_imports,
-    })
-    .unwrap();
+    }) {
+        Ok(vm_proto) => vm_proto,
+        Err(e) => return Ok(TaskResponse::Error(e.to_string())),
+    };
+
     let mut ret: Result<Vec<u8>, String> = Ok(Vec::new());
     let mut runtime_logs: Vec<LogInfo> = vec![];
 
     for (call, params) in task.calls {
-        log::trace!("Calling {}", call);
+        log::trace!(target: LOG_TARGET, "Calling {call}");
 
         let vm = runtime_call::run(runtime_call::Config {
             virtual_machine: vm_proto.clone(),
@@ -142,6 +161,8 @@ pub async fn run_task(task: TaskCall, js: crate::JsCallback) -> Result<TaskRespo
             storage_main_trie_changes,
             max_log_level: task.runtime_log_level,
             calculate_trie_changes: false,
+            storage_proof_size_behavior:
+                runtime_call::StorageProofSizeBehavior::ConstantReturnValue(task.storage_proof_size),
         });
 
         let mut vm = match vm {
@@ -190,9 +211,7 @@ pub async fn run_task(task: TaskCall, js: crate::JsCallback) -> Result<TaskRespo
                     }
                 }
 
-                RuntimeCall::ClosestDescendantMerkleValue(_req) => {
-                    unreachable!()
-                }
+                RuntimeCall::ClosestDescendantMerkleValue(req) => req.resume_unknown(),
 
                 RuntimeCall::NextKey(req) => {
                     if req.branch_nodes() {
@@ -329,18 +348,14 @@ pub async fn run_task(task: TaskCall, js: crate::JsCallback) -> Result<TaskRespo
                                 message,
                             } => {
                                 let level = match log_level {
-                                    0 => "ERROR".to_string(),
-                                    1 => "WARN".to_string(),
-                                    2 => "INFO".to_string(),
-                                    3 => "DEBUG".to_string(),
-                                    4 => "TRACE".to_string(),
-                                    l => format!("_{l}_"),
+                                    0 => log::Level::Error,
+                                    1 => log::Level::Warn,
+                                    2 => log::Level::Info,
+                                    3 => log::Level::Debug,
+                                    4 => log::Level::Trace,
+                                    l => unreachable!("unexpected log level {l}"),
                                 };
-                                log::info!(
-                                    "{}: {}",
-                                    format!("{:<28}{:>6}", target.to_string(), level),
-                                    message.to_string()
-                                );
+                                log::log!(target: target.as_ref(), level, "{}", message.to_string());
                                 runtime_logs.push(LogInfo {
                                     message: message.to_string(),
                                     level: Some(log_level),
@@ -354,7 +369,7 @@ pub async fn run_task(task: TaskCall, js: crate::JsCallback) -> Result<TaskRespo
             }
         };
 
-        log::trace!("Completed {}", call);
+        log::trace!(target: LOG_TARGET, "Completed {call}");
 
         match res {
             Ok(success) => {
@@ -401,18 +416,18 @@ pub async fn run_task(task: TaskCall, js: crate::JsCallback) -> Result<TaskRespo
     }))
 }
 
-pub async fn runtime_version(wasm: HexString) -> RuntimeVersion {
+pub async fn runtime_version(wasm: HexString) -> Result<RuntimeVersion, JsError> {
     let vm_proto = HostVmPrototype::new(Config {
         module: &wasm,
         heap_pages: HeapPages::from(2048),
         exec_hint: smoldot::executor::vm::ExecHint::ValidateAndExecuteOnce,
         allow_unresolved_imports: true,
     })
-    .unwrap();
+    .map_err(|e| JsError::new(&e.to_string()))?;
 
     let core_version = vm_proto.runtime_version().decode();
 
-    RuntimeVersion::new(core_version)
+    Ok(RuntimeVersion::new(core_version))
 }
 
 pub fn calculate_state_root(

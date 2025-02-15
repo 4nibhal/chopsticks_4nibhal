@@ -1,22 +1,33 @@
 import { config as dotenvConfig } from 'dotenv'
-import { hideBin } from 'yargs/helpers'
 import _ from 'lodash'
 import yargs from 'yargs'
 import type { MiddlewareFunction } from 'yargs'
+import { hideBin } from 'yargs/helpers'
+import { z } from 'zod'
 
-import { Blockchain, connectParachains, connectVertical, environment } from '@acala-network/chopsticks-core'
-import { configSchema, fetchConfig, getYargsOptions } from './schema/index.js'
-import { pluginExtendCli } from './plugins/index.js'
+import { type Blockchain, connectParachains, connectVertical, environment } from '@acala-network/chopsticks-core'
 import { setupWithServer } from './index.js'
+import { loadRpcMethodsByScripts, pluginExtendCli } from './plugins/index.js'
+import { configSchema, fetchConfig, getYargsOptions } from './schema/index.js'
 
 dotenvConfig()
 
-const processArgv: MiddlewareFunction<{ config?: string; port?: number }> = async (argv) => {
-  if (argv.config) {
-    Object.assign(argv, _.defaults(argv, await fetchConfig(argv.config)))
-  }
-  if (environment.PORT) {
-    argv.port = Number(environment.PORT)
+const processArgv: MiddlewareFunction<{ config?: string; port?: number; unsafeRpcMethods?: string }> = async (argv) => {
+  try {
+    if (argv.unsafeRpcMethods) {
+      await loadRpcMethodsByScripts(argv.unsafeRpcMethods)
+    }
+    if (argv.config) {
+      Object.assign(argv, _.defaults(argv, await fetchConfig(argv.config)))
+    }
+    if (environment.PORT) {
+      argv.port = Number(environment.PORT)
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error('Bad argv', { cause: error.flatten().fieldErrors })
+    }
+    throw error
   }
 }
 
@@ -33,7 +44,8 @@ const commands = yargs(hideBin(process.argv))
           'Path to config file with default options',
           () => ({}), // we load config in middleware
         )
-        .options(getYargsOptions(configSchema.shape)),
+        .options(getYargsOptions(configSchema.shape))
+        .deprecateOption('addr', '⚠️ Use --host instead.'),
     async (argv) => {
       await setupWithServer(configSchema.parse(argv))
     },
@@ -84,10 +96,12 @@ const commands = yargs(hideBin(process.argv))
   .alias('endpoint', 'e')
   .alias('port', 'p')
   .alias('block', 'b')
+  .alias('unsafe-rpc-methods', 'ur')
   .alias('import-storage', 's')
   .alias('wasm-override', 'w')
   .usage('Usage: $0 <command> [options]')
   .example('$0', '-c acala')
+  .showHelpOnFail(false)
 
 if (!environment.DISABLE_PLUGINS) {
   pluginExtendCli(
